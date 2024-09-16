@@ -19,7 +19,7 @@ def collect_photos_recursively(dir: str, blacklisted_dir_names: list[str]):
         if entry.is_file():
             content_type, _ = mimetypes.guess_type(entry.name)
             if content_type is not None:
-                if content_type not in [
+                if content_type in [
                     "image/apng",
                     "image/bmp",
                     "image/gif",
