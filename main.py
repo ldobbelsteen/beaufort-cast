@@ -19,11 +19,18 @@ def collect_photos_recursively(dir: str, blacklisted_dir_names: list[str]):
         if entry.is_file():
             content_type, _ = mimetypes.guess_type(entry.name)
             if content_type is not None:
-                if content_type.startswith("image/"):
+                if content_type not in [
+                    "image/apng",
+                    "image/bmp",
+                    "image/gif",
+                    "image/jpeg",
+                    "image/png",
+                    "image/webp",
+                ]:  # based on https://developers.google.com/cast/docs/media
                     result.append((entry.path, content_type))
                 else:
                     logging.debug(
-                        f"file '{entry.path}' is likely not an image, ignoring"
+                        f"file '{entry.path}' is likely not an image or has unsupported format, ignoring"
                     )
             else:
                 logging.debug(
