@@ -1,20 +1,23 @@
-name: CI
+name: Build container image
 on: push
 
 jobs:
-  build-image:
-    name: Build container image
+  build:
+    name: Build and push image
     runs-on: ubuntu-latest
+
     env:
       IMAGE_NAME: beaufort-cast
       REGISTRY: ghcr.io/ldobbelsteen
+
     permissions:
       contents: read
       packages: write
+
     steps:
       - name: Clone the repository
         id: repository-checkout
-        uses: actions/checkout@v2
+        uses: actions/checkout@v4
 
       - name: Build image
         id: image-build
@@ -24,6 +27,7 @@ jobs:
           tags: latest ${{ github.sha }}
           containerfiles: |
             ./Containerfile
+
       - name: Log in to registry
         id: registry-login
         uses: redhat-actions/podman-login@v1
@@ -33,11 +37,10 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Push image to registry
-        if : ${{ github.ref == 'refs/heads/main' }}
+        if: ${{ github.ref == 'refs/heads/main' }}
         id: image-push
         uses: redhat-actions/push-to-registry@v2
         with:
           registry: ${{ env.REGISTRY }}
           image: ${{ steps.image-build.outputs.image }}
           tags: ${{ steps.image-build.outputs.tags }}
-          
