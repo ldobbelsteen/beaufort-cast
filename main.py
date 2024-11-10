@@ -186,8 +186,8 @@ if __name__ == "__main__":
         "BLACKLISTED_DIR_NAMES",
         "@eaDir;zucht;instorm;voorjaarsweekend;vraagdatum;tilburg;stormenboek;zware;overlege;overlegé",
     ).split(";")
-    cast_check_interval_secs = float(os.getenv("CAST_CHECK_INTERVAL_SECS", 20))
-    next_photo_interval_secs = float(os.getenv("NEXT_PHOTO_INTERVAL_SECS", 20))
+    cast_check_interval_secs = float(os.getenv("CAST_CHECK_INTERVAL_SECS", 27))
+    next_photo_interval_secs = float(os.getenv("NEXT_PHOTO_INTERVAL_SECS", 15))
     photo_index_interval_secs = float(
         os.getenv("PHOTO_INDEX_INTERVAL_SECS", 2 * 60 * 60)
     )
