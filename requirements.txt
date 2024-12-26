@@ -1,2 +1,2 @@
-bottle == 0.12.25
-pychromecast == 14.0.1
+bottle == 0.13.2
+pychromecast == 14.0.5
