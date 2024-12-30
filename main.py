@@ -1,3 +1,4 @@
+import math
 import mimetypes
 import random
 import sys
@@ -10,10 +11,23 @@ from datetime import datetime
 from bottle import static_file, request, abort, run, route
 import pychromecast
 
+PHOTO_DIR = os.environ["PHOTO_DIR"]
+CAST_DEVICE_NAME = os.environ["CAST_DEVICE_NAME"]
+LOCAL_IP = os.environ["LOCAL_IP"]
+LISTENING_PORT = int(os.environ["LISTENING_PORT"])
+BLACKLISTED_DIR_NAMES = os.environ["BLACKLISTED_DIR_NAMES"].split(";")
+CAST_CHECK_INTERVAL_SECS = float(os.environ["CAST_CHECK_INTERVAL_SECS"])
+NEXT_PHOTO_INTERVAL_SECS = float(os.environ["NEXT_PHOTO_INTERVAL_SECS"])
+PHOTO_INDEX_INTERVAL_SECS = float(os.environ["PHOTO_INDEX_INTERVAL_SECS"])
 
-def collect_photos_recursively(dir: str, blacklisted_dir_names: list[str]):
-    """Collect all photos in a directory and its subdirectories. Returns a list of tuples where
-    the first element is the relative path to the photo and the second element is the content type."""
+
+def is_not_blacklisted(dir_name: str) -> bool:
+    return all(
+        banned.lower() not in dir_name.lower() for banned in BLACKLISTED_DIR_NAMES
+    )
+
+
+def collect_photos_recursively(dir: str):
     result: list[tuple[str, str]] = []
     for entry in os.scandir(dir):
         if entry.is_file():
@@ -30,120 +44,146 @@ def collect_photos_recursively(dir: str, blacklisted_dir_names: list[str]):
                     result.append((entry.path, content_type))
                 else:
                     logging.debug(
-                        f"file '{entry.path}' is likely not an image or has unsupported format, ignoring"
+                        f"ignoring file '{entry.path}' that is likely not an image or has unsupported format"
                     )
             else:
                 logging.debug(
-                    f"could not determine content type for '{entry.path}', ignoring"
+                    f"ignoring file '{entry.path}' for which content type could not be determined"
                 )
         elif entry.is_dir():
-            if all(
-                banned.lower() not in entry.name.lower()
-                for banned in blacklisted_dir_names
-            ):
-                result.extend(
-                    collect_photos_recursively(entry.path, blacklisted_dir_names)
-                )
+            if is_not_blacklisted(entry.name):
+                result.extend(collect_photos_recursively(entry.path))
+            else:
+                logging.debug(f"ignoring blacklisted directory '{entry.path}'")
     return result
 
 
-def run_photo_server(photo_dir: str, local_ip: str, listening_port: int, key: str):
+class PhotoIndex:
+    # First layer represents years, second layer represents subdirectories within years,
+    # third layer represents photos within subdirectories.
+    year_photos: list[list[list[tuple[str, str]]]]
+
+    # Weights for each year, used for random selection.
+    year_weights: list[float]
+
+    # The time this index was created.
+    time: datetime
+
+    def __init__(self):
+        logging.info("indexing photos...")
+
+        year_entries: list[os.DirEntry[str]] = []
+        for entry in os.scandir(PHOTO_DIR):
+            if entry.is_dir():
+                if entry.name.isnumeric():
+                    if is_not_blacklisted(entry.name):
+                        year_entries.append(entry)
+                    else:
+                        logging.debug(
+                            f"ignoring blacklisted year directory '{entry.path}'"
+                        )
+                else:
+                    logging.warning(
+                        f"ignoring non-year directory found in root of photo directory '{entry.path}'"
+                    )
+            else:
+                logging.warning(
+                    f"ignoring non-directory found in root of photo directory '{entry.path}'"
+                )
+
+        year_entries.sort(key=lambda x: x.name)
+        year_photos: list[list[list[tuple[str, str]]]] = []
+
+        for entry in year_entries:
+            subdir_entries: list[os.DirEntry[str]] = []
+            for subentry in os.scandir(entry.path):
+                if subentry.is_dir():
+                    if is_not_blacklisted(subentry.name):
+                        subdir_entries.append(subentry)
+                    else:
+                        logging.debug(
+                            f"ignoring blacklisted year subdirectory '{subentry.path}'"
+                        )
+                else:
+                    logging.warning(
+                        f"ignoring non-directory found in year subdirectory '{subentry.path}'"
+                    )
+
+            subdir_entries.sort(key=lambda x: x.name)
+            subdir_photos = []
+
+            for subentry in subdir_entries:
+                photos = collect_photos_recursively(subentry.path)
+                if len(photos) > 0:
+                    subdir_photos.append(
+                        [
+                            (os.path.relpath(path, PHOTO_DIR), content_type)
+                            for path, content_type in photos
+                        ]
+                    )
+
+            year_photos.append(subdir_photos)
+
+        logging.info("indexing complete")
+
+        self.year_photos = year_photos
+        self.year_weights = [math.pow(2, i) for i in range(len(year_photos))]
+        self.year_weights[-1] /= 4  # reduce weight of most recent year
+        self.time = datetime.now()
+
+    def get_random_photo(self) -> tuple[str, str]:
+        year = random.choices(self.year_photos, self.year_weights, k=1)[0]
+        subdir = random.choice(year)
+        return random.choice(subdir)
+
+    def is_outdated(self) -> bool:
+        return (datetime.now() - self.time).total_seconds() > PHOTO_INDEX_INTERVAL_SECS
+
+
+def run_photo_server(key: str):
     """Spawn a Bottle server to serve photos."""
 
     @route("/<path:path>")
     def send_photo(path: str):
         if request.query.key == key:
-            return static_file(path, photo_dir)
+            return static_file(path, PHOTO_DIR)
         else:
             abort(401, "unauthorized")
 
     run(
-        host=local_ip,
-        port=listening_port,
+        host=LOCAL_IP,
+        port=LISTENING_PORT,
         quiet=True,
     )
 
 
-def main(
-    photo_dir: str,
-    cast_device_name: str,
-    local_ip: str,
-    listening_port: int,
-    blacklisted_dir_names: list[str],
-    cast_check_interval_secs: float,
-    next_photo_interval_secs: float,
-    photo_index_interval_secs: float,
-):
-    # Create random key for image server.
+def main():
+    # Create random key for image server to prevent unauthorized access.
     key = str(uuid.uuid4())
     logging.debug(f"key: {key}")
 
     # Start the image server.
-    thread = threading.Thread(
-        target=run_photo_server,
-        args=(photo_dir, local_ip, listening_port, key),
-    )
+    thread = threading.Thread(target=run_photo_server, args=[key])
     thread.daemon = True
     thread.start()
 
-    def index_photos():
-        """Get list of photos of each subdirectory associated with a year in the directory.
-        The list is sorted from oldest to newest year. The lists are nonempty."""
-        logging.info("indexing photos...")
-
-        result: list[list[tuple[str, str]]] = []
-        for entry in sorted(os.scandir(photo_dir), key=lambda x: x.name):
-            if entry.is_dir():
-                if entry.name.isnumeric():  # is a year
-                    year_photos = collect_photos_recursively(
-                        entry.path, blacklisted_dir_names
-                    )
-                    if len(year_photos) > 0:
-                        result.append(
-                            [
-                                (os.path.relpath(path, photo_dir), content_type)
-                                for path, content_type in year_photos
-                            ]
-                        )
-
-        logging.info("indexing complete")
-        return result
-
-    # Index photos on disk.
-    photos = index_photos()
-    last_index = datetime.now()
-
-    def check_index_update():
-        """Check if the photo index needs to be updated and do so if true."""
-        nonlocal photos
-        nonlocal last_index
-        logging.debug("checking index update...")
-        index_elapsed = (datetime.now() - last_index).total_seconds()
-        if index_elapsed > photo_index_interval_secs:
-            photos = index_photos()
-            last_index = datetime.now()
-
-    def pick_random_photo() -> tuple[str, str]:
-        """Pick a random photo from the indexed photos."""
-        weights = [2**i for i in range(len(photos))]
-        weights[-1] = -(weights[-1] // -4)
-        year_photos = random.choices(photos, weights=weights, k=1)[0]
-        return random.choice(year_photos)
+    index = PhotoIndex()
 
     def path_to_url(path: str) -> str:
-        return f"http://{local_ip}:{listening_port}/{path}?key={key}"
+        return f"http://{LOCAL_IP}:{LISTENING_PORT}/{path}?key={key}"
 
-    casts, _ = pychromecast.get_listed_chromecasts(friendly_names=[cast_device_name])
+    casts, _ = pychromecast.get_listed_chromecasts(friendly_names=[CAST_DEVICE_NAME])
     if len(casts) == 0:
-        logging.error(f"chromecast '{cast_device_name}' not found")
+        logging.error(f"chromecast '{CAST_DEVICE_NAME}' not found")
         sys.exit(1)
     elif len(casts) > 1:
-        logging.error(f"multiple chromecasts found with name '{cast_device_name}'")
+        logging.error(f"multiple chromecasts found with name '{CAST_DEVICE_NAME}'")
         sys.exit(1)
     cast = casts[0]
 
     while True:
-        check_index_update()
+        if index.is_outdated():
+            index = PhotoIndex()
         cast.wait()
 
         # We *should* now have the status.
@@ -160,11 +200,13 @@ def main(
 
                 # Cast photos while we still have control.
                 while True:
-                    check_index_update()
-                    path, content_type = pick_random_photo()
+                    if index.is_outdated():
+                        index = PhotoIndex()
+
+                    path, content_type = index.get_random_photo()
                     mc.play_media(path_to_url(path), content_type)
 
-                    time.sleep(next_photo_interval_secs)
+                    time.sleep(NEXT_PHOTO_INTERVAL_SECS)
                     if cast.status.display_name != "Default Media Receiver":
                         break
 
@@ -174,37 +216,13 @@ def main(
         else:
             logging.warning("chromecast status unknown")
 
-        time.sleep(cast_check_interval_secs)
+        time.sleep(CAST_CHECK_INTERVAL_SECS)
 
 
 if __name__ == "__main__":
-    photo_dir = os.getenv("PHOTO_DIR", "/photos")
-    cast_device_name = os.getenv("CAST_DEVICE_NAME", "Huishok TV")
-    local_ip = os.getenv("LOCAL_IP", "192.168.1.44")
-    listening_port = int(os.getenv("LISTENING_PORT", 1774))
-    blacklisted_dir_names = os.getenv(
-        "BLACKLISTED_DIR_NAMES",
-        "@eaDir;zucht;instorm;voorjaarsweekend;vraagdatum;tilburg;stormenboek;zware;overlege;overlegé",
-    ).split(";")
-    cast_check_interval_secs = float(os.getenv("CAST_CHECK_INTERVAL_SECS", 27))
-    next_photo_interval_secs = float(os.getenv("NEXT_PHOTO_INTERVAL_SECS", 15))
-    photo_index_interval_secs = float(
-        os.getenv("PHOTO_INDEX_INTERVAL_SECS", 2 * 60 * 60)
-    )
-    log_level = os.getenv("LOG_LEVEL", "INFO").upper()
-
     logging.basicConfig(
-        level=log_level,
+        level=os.getenv("LOG_LEVEL", "INFO").upper(),
         format="%(asctime)s %(levelname)s: %(message)s",
     )
 
-    main(
-        photo_dir,
-        cast_device_name,
-        local_ip,
-        listening_port,
-        blacklisted_dir_names,
-        cast_check_interval_secs,
-        next_photo_interval_secs,
-        photo_index_interval_secs,
-    )
+    main()
