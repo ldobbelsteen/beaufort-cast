@@ -1,4 +1,3 @@
-import math
 import mimetypes
 import random
 import sys
@@ -19,6 +18,16 @@ BLACKLISTED_DIR_NAMES = os.environ["BLACKLISTED_DIR_NAMES"].split(";")
 CAST_CHECK_INTERVAL_SECS = float(os.environ["CAST_CHECK_INTERVAL_SECS"])
 NEXT_PHOTO_INTERVAL_SECS = float(os.environ["NEXT_PHOTO_INTERVAL_SECS"])
 PHOTO_INDEX_INTERVAL_SECS = float(os.environ["PHOTO_INDEX_INTERVAL_SECS"])
+
+
+def year_progress():
+    """Returns a float between 0 and 1 representing the progress through the current year."""
+    now = datetime.now()
+    start_of_year = datetime(now.year, 1, 1)
+    end_of_year = datetime(now.year + 1, 1, 1)
+    total_seconds_in_year = (end_of_year - start_of_year).total_seconds()
+    seconds_elapsed = (now - start_of_year).total_seconds()
+    return seconds_elapsed / total_seconds_in_year
 
 
 def is_not_blacklisted(dir_name: str) -> bool:
@@ -127,12 +136,22 @@ class PhotoIndex:
         logging.info("indexing complete")
 
         self.year_photos = year_photos
-        self.year_weights = [math.pow(2, i) for i in range(len(year_photos))]
-        self.year_weights[-1] /= 4  # reduce weight of most recent year
+
+        # First year gets 1, second 2, third 4, fourth 8, fifth 16, etc.
+        self.year_weights = [2**i for i in range(len(year_photos))]
+
+        # If there are photos for the current year, make the weight for the current year
+        # proportional to the progress through the year to prevent the same photos from being
+        # shown too often.
+        latest_year = int(year_entries[-1].name)
+        current_year = datetime.now().year
+        if latest_year == current_year:
+            self.year_weights[-1] = int(round(year_progress() * self.year_weights[-1]))
+
         self.time = datetime.now()
 
     def get_random_photo(self) -> tuple[str, str]:
-        year = random.choices(self.year_photos, self.year_weights, k=1)[0]
+        year = random.choices(self.year_photos, weights=self.year_weights, k=1)[0]
         subdir = random.choice(year)
         return random.choice(subdir)
 
