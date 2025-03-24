@@ -151,7 +151,13 @@ def pick_random_photo(
     album = random.choice(year)
 
     assets = list_album_assets(immich_base_url, immich_api_key, album)
-    return random.choice(assets)
+    if len(assets) > 0:
+        return random.choice(assets)
+
+    # Retry if the album has no (valid) assets.
+    return pick_random_photo(
+        immich_base_url, immich_api_key, album_substr_blacklist, year_decay_factor
+    )
 
 
 def get_chromecast(name: str) -> pychromecast.Chromecast:
