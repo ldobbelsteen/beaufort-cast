@@ -124,6 +124,8 @@ def list_album_assets(
 
         if is_supported_image_format(content_type):
             result.append((id, content_type))
+        else:
+            logging.debug(f"ignoring unsupported asset '{id}' ({content_type})")
 
     return result
 
