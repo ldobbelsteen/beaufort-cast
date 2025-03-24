@@ -77,17 +77,18 @@ def list_albums_by_year(
 @cached(cache=LRUCache(maxsize=1))
 def compute_year_weights(year_count: int, year_decay_factor: float) -> list[float]:
     assert year_decay_factor >= 1.0
+    assert year_decay_factor <= 2.0
 
     # The weights grow exponentially (by the decay factor) with the year.
     result = [year_decay_factor**i for i in range(year_count)]
 
     # The last year should be weighted by the progress through the year.
-    result[-1] = year_progress() * result[-1]
+    result[-1] *= year_progress()
 
     return result
 
 
-def is_supported_image_format_on_chromecast(content_type: str) -> bool:
+def is_supported_image_format(content_type: str) -> bool:
     return content_type in [
         "image/apng",
         "image/bmp",
@@ -104,7 +105,7 @@ def list_album_assets(
     immich_api_key: str,
     album_id: str,
 ) -> list[tuple[str, str]]:
-    """List all asset IDs and content types in the given album."""
+    """List all image assets' IDs and content types in the given album."""
     resp = requests.get(
         f"{immich_base_url}/api/albums/{album_id}",
         headers={
@@ -121,7 +122,7 @@ def list_album_assets(
         assert isinstance(id, str)
         assert isinstance(content_type, str)
 
-        if is_supported_image_format_on_chromecast(content_type):
+        if is_supported_image_format(content_type):
             result.append((id, content_type))
 
     return result
@@ -175,13 +176,13 @@ def main(
         # Request the status of the Chromecast.
         cast.wait()
 
-        # Check whether the request was successful.
+        # Retry later if the request failed.
         if cast.status is None:
             logging.warning("chromecast status unknown")
             time.sleep(cast_backoff_secs)
             continue
 
-        # Check whether the Chromecast is idle.
+        # Retry later if the Chromecast is not idle.
         if (
             cast.status.display_name
             not in [
@@ -205,8 +206,9 @@ def main(
                 album_substr_blacklist,
                 year_decay_factor,
             )
-            url = direct_asset_url(immich_base_url, immich_api_key, id)
+
             logging.debug(f"casting photo {id} ({content_type})")
+            url = direct_asset_url(immich_base_url, immich_api_key, id)
             mc.play_media(url, content_type)
             time.sleep(photo_interval_secs)
 
