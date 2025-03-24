@@ -155,6 +155,7 @@ def pick_random_photo(
         return random.choice(assets)
 
     # Retry if the album has no (valid) assets.
+    logging.warning(f"album '{album}' has no valid assets")
     return pick_random_photo(
         immich_base_url, immich_api_key, album_substr_blacklist, year_decay_factor
     )
