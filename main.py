@@ -8,6 +8,24 @@ import random
 from datetime import datetime
 import re
 from cachetools import LRUCache, cached, TTLCache
+import functools
+
+
+def retry_indefinitely(interval: int):
+    def decorator(f):
+        @functools.wraps(f)
+        def wrapper(*args, **kwargs):
+            while True:
+                try:
+                    return f(*args, **kwargs)
+                except Exception as e:
+                    logging.error(e)
+                    logging.error(f"Retrying in {interval} seconds...")
+                    time.sleep(interval)
+
+        return wrapper
+
+    return decorator
 
 
 def year_progress():
@@ -134,6 +152,7 @@ def direct_asset_url(base_url: str, api_key: str, id: str) -> str:
     return f"{base_url}/api/assets/{id}/original?apiKey={api_key}"
 
 
+@retry_indefinitely(interval=22)
 def pick_random_photo(
     immich_base_url: str,
     immich_api_key: str,
@@ -161,6 +180,7 @@ def pick_random_photo(
     )
 
 
+@retry_indefinitely(interval=22)
 def get_chromecast(name: str) -> pychromecast.Chromecast:
     casts, _ = pychromecast.get_listed_chromecasts(friendly_names=[name])
     if len(casts) == 0:
