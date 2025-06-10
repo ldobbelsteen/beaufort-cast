@@ -190,6 +190,14 @@ def get_chromecast(name: str) -> pychromecast.Chromecast:
     return casts[0]
 
 
+def request_url_void(url: str, chunk_size: int = 1024):
+    """Request a URL and efficiently ignore the response."""
+    with requests.get(url, stream=True) as resp:
+        resp.raise_for_status()
+        for _ in resp.iter_content(chunk_size=chunk_size):
+            pass
+
+
 def main(
     chromecast_name: str,
     immich_base_url: str,
@@ -227,7 +235,18 @@ def main(
         logging.info("casting...")
         mc = cast.media_controller
 
-        # Cast photos while we still have control.
+        # Cast an initial photo.
+        id, content_type = pick_random_photo(
+            immich_base_url,
+            immich_api_key,
+            album_substr_blacklist,
+            year_decay_factor,
+        )
+        logging.debug(f"casting initial photo {id} ({content_type})")
+        url = direct_asset_url(immich_base_url, immich_api_key, id)
+        mc.play_media(url, content_type)
+
+        # Keep casting new photos while we still have control.
         while True:
             id, content_type = pick_random_photo(
                 immich_base_url,
@@ -236,14 +255,27 @@ def main(
                 year_decay_factor,
             )
 
-            logging.debug(f"casting photo {id} ({content_type})")
             url = direct_asset_url(immich_base_url, immich_api_key, id)
-            mc.play_media(url, content_type)
+
+            # Make the system load the photo by requesting it. This causes the photo to be
+            # cached in the system's memory. On subsequent requests, the photo is already
+            # cached, so the Chromecast's request will be served from the cache.
+            logging.debug(f"warming-up new photo {id} ({content_type})")
+            try:
+                request_url_void(url)
+            except Exception:
+                pass
+
+            # Let the previous image display for the configured interval.
             time.sleep(photo_interval_secs)
 
             # Stop if we lost control of the cast.
             if cast.status.display_name != "Default Media Receiver":
                 break
+
+            # Actually cast the new photo.
+            logging.debug(f"casting new photo {id} ({content_type})")
+            mc.play_media(url, content_type)
 
         logging.info("finished casting")
         time.sleep(cast_backoff_secs)
