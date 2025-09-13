@@ -3,9 +3,7 @@ on: push
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    uses: ldobbelsteen/ghcr-build-push/.github/workflows/build.yml@multiarch
     permissions:
       contents: read
       packages: write
-    steps:
-      - uses: ldobbelsteen/ghcr-build-push/.github/workflows/build.yml@multiarch
