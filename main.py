@@ -219,15 +219,20 @@ def main(
             time.sleep(cast_backoff_secs)
             continue
 
-        # Retry later if the Chromecast is not idle.
-        if (
-            cast.status.display_name
-            not in [
-                "Backdrop",  # default chromecast ambient mode, which we can override
-                "Default Media Receiver",  # continue previous session (in case of this script crashing or restarting)
-            ]
-        ):
-            logging.debug(f"chromecast not idle, status: {cast.status.display_name}")
+        # Determine if the Chromecast is fully idle.
+        is_idle = cast.status.display_name == "Backdrop"
+
+        # Determine if the Chromecast is already casting Immich content.
+        # We can resume casting if so, since we may have lost control of the cast.
+        is_casting_immich = (
+            cast.status.display_name == "Default Media Receiver"
+            and cast.media_controller.status.content_id is not None
+            and immich_base_url in cast.media_controller.status.content_id
+        )
+
+        # Retry later if the Chromecast is not idle nor resumable.
+        if not is_idle and not is_casting_immich:
+            logging.debug(f"chromecast busy: {cast.status.display_name}")
             time.sleep(cast_backoff_secs)
             continue
 
