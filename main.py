@@ -219,6 +219,8 @@ def main(
             time.sleep(cast_backoff_secs)
             continue
 
+        mc = cast.media_controller
+
         # Determine if the Chromecast is fully idle.
         is_idle = cast.status.display_name == "Backdrop"
 
@@ -226,8 +228,8 @@ def main(
         # We can resume casting if so, since we may have lost control of the cast.
         is_casting_immich = (
             cast.status.display_name == "Default Media Receiver"
-            and cast.media_controller.status.content_id is not None
-            and immich_base_url in cast.media_controller.status.content_id
+            and mc.status.content_id is not None
+            and immich_base_url in mc.status.content_id
         )
 
         # Retry later if the Chromecast is not idle nor resumable.
@@ -236,10 +238,6 @@ def main(
             time.sleep(cast_backoff_secs)
             continue
 
-        # Start a casting session on the Chromecast.
-        logging.info("casting...")
-        mc = cast.media_controller
-
         # Cast an initial photo.
         id, content_type = pick_random_photo(
             immich_base_url,
@@ -247,6 +245,7 @@ def main(
             album_substr_blacklist,
             year_decay_factor,
         )
+        logging.info("casting...")
         logging.debug(f"casting initial photo {id} ({content_type})")
         url = direct_asset_url(immich_base_url, immich_api_key, id)
         mc.play_media(url, content_type)
